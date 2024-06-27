@@ -1,0 +1,30 @@
+name: Update Domains
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 每天0点运行一次
+  workflow_dispatch: # 手动触发
+
+jobs:
+  update-domains:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Append and deduplicate domains
+      run: |
+        # 将文件内容追加到 domains.txt
+        cat aggregator/aggregate/data/backup_domain >> domains.txt
+        # 去重
+        sort -u domains.txt -o domains.txt
+
+    - name: Commit changes
+      run: |
+        git config --local user.name "github-actions[bot]"
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git add domains.txt
+        git commit -m "Update domains.txt with new entries from backup_domain"
+        git push
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
