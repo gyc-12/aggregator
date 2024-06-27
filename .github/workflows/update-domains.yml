@@ -15,9 +15,11 @@ jobs:
     - name: Append and deduplicate domains
       run: |
         # 将文件内容追加到 domains.txt
+        cat aggregate/data/domains.txt >> aggregate/data/backup_domain
         cat aggregate/data/backup_domain >> aggregate/data/domains.txt
         # 去重
         sort -u aggregate/data/domains.txt -o aggregate/data/domains.txt
+        sort -u aggregate/data/backup_domain -o aggregate/data/backup_domain
 
     - name: Commit changes
       run: |
