@@ -15,15 +15,15 @@ jobs:
     - name: Append and deduplicate domains
       run: |
         # 将文件内容追加到 domains.txt
-        cat aggregator/aggregate/data/backup_domain >> domains.txt
+        cat aggregate/data/backup_domain >> aggregate/data/domains.txt
         # 去重
-        sort -u domains.txt -o domains.txt
+        sort -u aggregate/data/domains.txt -o aggregate/data/domains.txt
 
     - name: Commit changes
       run: |
         git config --local user.name "github-actions[bot]"
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git add domains.txt
+        git add aggregate/data/domains.txt
         git commit -m "Update domains.txt with new entries from backup_domain"
         git push
       env:
