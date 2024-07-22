@@ -449,8 +449,9 @@ class AirPort:
         if "" == self.sub:
             logger.error(f"[ParseError] cannot found any proxies because subscribe url is empty, domain: {self.ref}")
             return []
-
-        if self.sub.startswith(utils.FILEPATH_PROTOCAL):
+        if re.match(utils.PROXY_REG, self.sub):
+            text = self.sub
+        elif self.sub.startswith(utils.FILEPATH_PROTOCAL):
             self.sub = self.sub[len(utils.FILEPATH_PROTOCAL) - 1 :]
             if not os.path.exists(self.sub) or not os.path.isfile(self.sub):
                 logger.error(f"[ParseError] file: {self.sub} not found")
@@ -655,10 +656,12 @@ class AirPort:
                 traceback.print_exc()
 
             generate_conf = os.path.join(PATH, "subconverter", "generate.ini")
+
+            subconverter_url = text if re.match(utils.PROXY_REG, text) else f"{artifact}.txt"
             success = subconverter.generate_conf(
                 generate_conf,
                 artifact,
-                f"{artifact}.txt",
+                subconverter_url,
                 f"{artifact}.yaml",
                 "clash",
                 True,

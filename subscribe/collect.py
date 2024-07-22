@@ -24,6 +24,9 @@ from logger import logger
 from urlvalidator import isurl
 from workflow import TaskConfig
 
+import json
+from collections import defaultdict
+
 import clash
 import subconverter
 
@@ -111,15 +114,50 @@ def assign(
     # 是否允许特殊协议
     special_protocols = AirPort.enable_special_protocols()
 
-    tasks = (
-        [
-            TaskConfig(name=utils.random_chars(length=8), sub=x, bin_name=bin_name, special_protocols=special_protocols)
-            for x in subscriptions
-            if x
-        ]
-        if subscriptions
-        else []
-    )
+    manual_subs = kwargs.get("manual_subs", []).copy()
+    manual_groups = [url for url in manual_subs if re.match(r"^https?://\S+", url)]
+    manual_proxies = [url for url in manual_subs if re.match(utils.PROXY_REG, url)]
+
+    page_filename = utils.trim(kwargs.get("page_filename", ""))
+    page_groups, page_proxies = set(), set()
+    if not page_filename:
+        logger.warning("cannot find valid page url for the subscriptions")
+    else:
+        page_url = utils.get_gist_url(username, gist_id, page_filename)
+        page_content = utils.http_get(url=page_url, timeout=30)
+        page_subscriptions = set(re.findall(r"^https?://\S+", page_content, flags=re.M))
+        if not page_subscriptions:
+            logger.warning("cannot found any valid page subscription")
+        else:
+            for page in page_subscriptions:
+                sub_page_content = utils.http_get(url=page, timeout=30)
+                cur_page_groups = set(re.findall(r"^https?://\S+", sub_page_content, flags=re.M))
+                cur_page_proxies = set(re.findall(utils.PROXY_REG, sub_page_content, flags=re.M))
+                if cur_page_groups:
+                    page_groups.update(cur_page_groups)
+                else:
+                    logger.warning(f"Cannot find any valid manual subscription in {page[-10:]}")
+                if cur_page_proxies:
+                    page_proxies.update(cur_page_proxies)
+                else:
+                    logger.warning(f"Cannot find any valid manual subscription in {page[-10:]}")
+    logger.info(f"found {len(page_groups)} subscriptions in manual pages")
+    logger.info(f"found {len(page_proxies)} proxies in manual pages")
+    logger.info(f"found {len(subscriptions)} subscriptions in auto subscription")
+    logger.info(f"found {len(manual_proxies)} proxies in manual subscription")
+    logger.info(f"found {len(manual_groups)} subscriptions in manual subscription")
+
+    tasks = []
+    combined_proxies = page_proxies | set(manual_proxies)
+    if combined_proxies:
+        for pxy in combined_proxies:
+            tasks.append(TaskConfig(name=utils.random_chars(length=8), sub=pxy, bin_name=bin_name, special_protocols=special_protocols))
+
+    combined_subscriptions = set(subscriptions) | page_groups | set(manual_groups)
+    tasks += [
+        TaskConfig(name=utils.random_chars(length=8), sub=x, bin_name=bin_name, special_protocols=special_protocols)
+        for x in combined_subscriptions if x
+    ]
 
     # 仅更新已有订阅
     if tasks and kwargs.get("refresh", False):
@@ -212,6 +250,10 @@ def aggregate(args: argparse.Namespace) -> None:
     access_token = utils.trim(args.key)
     username, gist_id = parse_gist_link(args.gist)
 
+    manual_gist_link = utils.get_gist_url(username, gist_id, args.manual_filename)
+    manual_content = utils.http_get(url=manual_gist_link, timeout=30)
+    manual_subs = sorted({line.strip() for line in manual_content.split('\n') if line.strip()})
+
     tasks = assign(
         bin_name=subconverter_bin,
         domains_file="domains.txt",
@@ -227,6 +269,8 @@ def aggregate(args: argparse.Namespace) -> None:
         access_token=access_token,
         subscribes_file=subscribes_file,
         customize_link=args.yourself,
+        page_filename=args.page_filename,
+        manual_subs=manual_subs
     )
 
     if not tasks:
@@ -249,6 +293,16 @@ def aggregate(args: argparse.Namespace) -> None:
         sys.exit(0)
 
     nodes, workspace = [], os.path.join(PATH, "clash")
+
+    # prefilter long name of grpc-service-name
+    prefiltered_proxies = []
+    for proxy in proxies:
+        grpc_opts = proxy.get('grpc-opts', {})
+        grpc_service_name = grpc_opts.get('grpc-service-name', '')
+        if len(grpc_service_name) <= 300:
+            prefiltered_proxies.append(proxy)
+    logger.info(f"prefilter long grpc-service-name, num: {len(proxies)-len(prefiltered_proxies)}")
+    proxies = prefiltered_proxies
 
     if args.skip:
         nodes = clash.filter_proxies(proxies).get("proxies", [])
@@ -295,6 +349,23 @@ def aggregate(args: argparse.Namespace) -> None:
             logger.error(f"cannot fetch any proxy")
             sys.exit(0)
 
+    try:
+        error_info_link = utils.get_gist_url(username, gist_id, args.error_filename)
+        error_info = json.loads(utils.http_get(url=error_info_link, timeout=30))
+    except Exception:
+        error_info = {}
+
+    proxy_count = defaultdict(int)
+    for nd in nodes:
+        proxy_count[nd["sub"]] += 1
+    for url in manual_subs:
+        if url not in proxy_count:
+            error_info[url] = error_info.get(url, 0) + 1
+        else:
+            error_info.pop(url, None)
+    error_info = {url: count for url, count in error_info.items() if url in manual_subs and count < args.error_limit}
+    filtered_manual_subs = [url for url in manual_subs if error_info.get(url, 0) < args.error_limit]
+
     subscriptions = set()
     for p in proxies:
         # 移除无用的标记
@@ -305,12 +376,33 @@ def aggregate(args: argparse.Namespace) -> None:
         if sub:
             subscriptions.add(sub)
 
+    unique_nodes, unique_node_tags = [], set()
+    for node in nodes:
+        node_tag = tuple((k, str(v)) for k, v in node.items() if k in ['type', 'server', 'port'])
+        if node_tag not in unique_node_tags:
+            unique_node_tags.add(node_tag)
+            unique_nodes.append(node)
+    dup_num = len(nodes) - len(unique_nodes)
+    nodes = unique_nodes
+    logger.info(f"Found {len(nodes)} proxies, removed {dup_num} duplicated proxies")
+
     data = {"proxies": nodes}
     urls = list(subscriptions)
     source = "proxies.yaml"
 
     # 如果文件夹不存在则创建
     os.makedirs(DATA_BASE, exist_ok=True)
+
+    error_info_file = os.path.join(DATA_BASE, args.error_filename)
+    with open(error_info_file, "w+", encoding="utf8") as f:
+        json.dump(error_info, f, indent=4)
+    logger.info(f"Error info written to: {error_info_file}")
+
+    manual_file = os.path.join(DATA_BASE, args.manual_filename)
+    with open(manual_file, "w+", encoding="utf8") as f:
+        for url in filtered_manual_subs:
+            f.write(url + '\n')
+    logger.info(f"Manual subs written to: {manual_file}")
 
     supplier = os.path.join(PATH, "subconverter", source)
     if os.path.exists(supplier) and os.path.isfile(supplier):
@@ -384,6 +476,14 @@ def aggregate(args: argparse.Namespace) -> None:
     # 如有必要，上传至 Gist
     if gist_id and access_token:
         files, push_conf = {}, {"gistid": gist_id, "filename": list(records.keys())[0]}
+
+        if os.path.exists(error_info_file) and os.path.isfile(error_info_file):
+            with open(error_info_file, "r", encoding="utf8") as f:
+                files[args.error_filename] = {"content": f.read(), "filename": args.error_filename}
+
+        if os.path.exists(manual_file) and os.path.isfile(manual_file):
+            with open(manual_file, "r", encoding="utf8") as f:
+                files[args.manual_filename] = {"content": f.read(), "filename": args.manual_filename}
 
         for k, v in records.items():
             if os.path.exists(v) and os.path.isfile(v):
@@ -580,6 +680,42 @@ if __name__ == "__main__":
         action="store_true",
         default=False,
         help="ignoring default proxies filter rules",
+    )
+
+    parser.add_argument(
+        "-pf",
+        "--page_filename",
+        type=str,
+        required=False,
+        default="page-subscribes.txt",
+        help="page subscriptions filename",
+    )
+
+    parser.add_argument(
+        "-mf",
+        "--manual_filename",
+        type=str,
+        required=False,
+        default="manual-subscribes.txt",
+        help="manual subscriptions filename",
+    )
+
+    parser.add_argument(
+        "-ef",
+        "--error_filename",
+        type=str,
+        required=False,
+        default="error_info.json",
+        help="error info filename",
+    )
+
+    parser.add_argument(
+        "-el",
+        "--error_limit",
+        type=int,
+        required=False,
+        default=360,
+        help="error limit",
     )
 
     parser.add_argument(
