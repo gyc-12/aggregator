@@ -131,7 +131,7 @@ def assign(
         else:
             for page in page_subscriptions:
                 sub_page_content = utils.http_get(url=page, timeout=30)
-                cur_page_groups = set(re.findall(r"^https?://\S+", sub_page_content, flags=re.M))
+                cur_page_groups = set(re.findall(r"^(?:.*Clash.*:\s)?(https?://\S+)", sub_page_content, flags=re.M))
                 cur_page_proxies = set(re.findall(utils.PROXY_REG, sub_page_content, flags=re.M))
                 if cur_page_groups:
                     page_groups.update(cur_page_groups)
