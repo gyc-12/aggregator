@@ -41,7 +41,7 @@ jobs:
         run: pip3 install -r requirements.txt
 
       - name: Refresh
-        run: python -u subscribe/collect.py --refresh --overwrite
+        run: python -u subscribe/collect.py  --overwrite
 
       - name: Commit and Push changes
         run: |
