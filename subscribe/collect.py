@@ -363,7 +363,7 @@ def aggregate(args: argparse.Namespace) -> None:
             error_info[url] = error_info.get(url, 0) + 1
         else:
             error_info.pop(url, None)
-    error_info = {url: count for url, count in error_info.items() if url in manual_subs and count < args.error_limit}
+    error_info = {url: count for url, count in error_info.items() if url in manual_subs and ((count < args.error_limit and url.start_with("http")) or count < 85)}
     filtered_manual_subs = [url for url in manual_subs if error_info.get(url, 0) < args.error_limit]
 
     subscriptions = set()
