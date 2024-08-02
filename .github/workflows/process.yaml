@@ -9,27 +9,26 @@ env:
   # time zone
   TZ: Asia/Shanghai
 
-  # network proxy aggregate config
-  SUBSCRIBE_CONF: ${{ secrets.SUBSCRIBE_CONF }}
+  # # network proxy aggregate config
+  # SUBSCRIBE_CONF: ${{ secrets.SUBSCRIBE_CONF }}
 
-  # token
-  PUSH_TOKEN: ${{ secrets.PUSH_TOKEN }}
+  # # token
+  # PUSH_TOKEN: ${{ secrets.PUSH_TOKEN }}
 
-  # network reachable
-  REACHABLE: ${{ vars.REACHABLE }}
+  # # network reachable
+  # REACHABLE: ${{ vars.REACHABLE }}
 
-  # not check connective
-  SKIP_ALIVE_CHECK: ${{ vars.SKIP_ALIVE_CHECK }}
+  # # not check connective
+  # SKIP_ALIVE_CHECK: ${{ vars.SKIP_ALIVE_CHECK }}
 
-  # skip remark
-  SKIP_REMARK: ${{ vars.SKIP_REMARK }}
+  # # skip remark
+  # SKIP_REMARK: ${{ vars.SKIP_REMARK }}
 
-  # workflow mode
-  WORKFLOW_MODE: ${{ vars.WORKFLOW_MODE }}
+  # # workflow mode
+  # WORKFLOW_MODE: ${{ vars.WORKFLOW_MODE }}
 
   # include spwcial protocols, such vless hysteria2 and hysteria
-  ENABLE_SPECIAL_PROTOCOLS: ${{ vars.ENABLE_SPECIAL_PROTOCOLS }}
-
+  ENABLE_SPECIAL_PROTOCOLS: true
 jobs:
   process:
     runs-on: ubuntu-latest
@@ -51,7 +50,15 @@ jobs:
         run: pip3 install -r requirements.txt
 
       - name: Process
-        run: python -u subscribe/process.py --overwrite
+        run: python -u subscribe/process.py --overwrite --easygoing
 
       - name: Timestamp
         run: date
+        
+      - name: Commit and Push changes
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data
+          git commit -m "Update data folder"
+          git push
